@@ -138,7 +138,7 @@ if username in users and users[username]["password"] == password_input:
                         c.execute("INSERT INTO frases(texto, autor) VALUES(?,?)", (new_phrase.strip(), username))
                         conn.commit()
                         st.success("¡Frase registrada!")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("La frase no puede estar vacía.")
 
@@ -209,7 +209,7 @@ if username in users and users[username]["password"] == password_input:
                                       (new_user.strip(), new_pass.strip(), new_role, int(new_admin)))
                             conn.commit()
                             st.success("Usuario agregado.")
-                            st.experimental_rerun()
+                            st.rerun()
                         except sqlite3.IntegrityError:
                             st.error("Ese usuario ya existe.")
 
@@ -223,7 +223,7 @@ if username in users and users[username]["password"] == password_input:
                         c.execute("DELETE FROM users WHERE username=?", (user_del,))
                         conn.commit()
                         st.success("Usuario eliminado.")
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
                     st.info("No hay otros usuarios para borrar.")
 
