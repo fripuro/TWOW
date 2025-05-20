@@ -194,9 +194,29 @@ if not st.session_state['user']:
             st.session_state['is_admin'] = bool(users[u][3])
             st.rerun()
         else:
-        # --- Formulario de envío para jugadores ---
-        pr_state = c.execute("SELECT responses_left FROM player_round WHERE round_id=? AND username=?",
-                             (round_id, username)).fetchone()
+            st.sidebar.error("Credenciales incorrectas o cuenta inactiva")
+    st.stop()
+
+# ---------- 7. Tabs ----------------------------------------------------------
+base_tabs = ["Acción", "Tienda", "Resultados", "Historial"]
+if st.session_state['is_admin']:
+    base_tabs.append("Admin")
+tabs = st.tabs(base_tabs)
+
+username = st.session_state['user']
+is_admin = st.session_state['is_admin']
+
+###############################################################################
+# ACCIÓN                                                                      #
+###############################################################################
+with tabs[0]:
+    role = users[username][2]
+    if role == 'juez':
+        st.info("Eres juez: no envías frases, solo votas.")
+        # Interfaz de votación (… se mantiene igual …)
+    else:
+        # Formulario de envío para jugadores
+        pr_state = c.execute("SELECT responses_left FROM player_round WHERE round_id=? AND username=?", (round_id, username)).fetchone()
         if not pr_state:
             st.error("No participas en esta ronda.")
         else:
@@ -205,13 +225,9 @@ if not st.session_state['user']:
             if left > 0:
                 frase_txt = st.text_input("Tu frase:")
                 if st.button("Enviar frase") and frase_txt.strip():
-                    c.execute("INSERT INTO frases(texto, autor, round_id) VALUES(?,?,?)",
-                              (frase_txt.strip(), username, round_id))
-                    c.execute("UPDATE player_round SET responses_left = responses_left - 1 WHERE round_id=? AND username=?",
-                              (round_id, username))
+                    c.execute("INSERT INTO frases(texto, autor, round_id) VALUES(?,?,?)", (frase_txt.strip(), username, round_id))
+                    c.execute("UPDATE player_round SET responses_left = responses_left - 1 WHERE round_id=? AND username=?", (round_id, username))
                     conn.commit(); st.success("Frase enviada"); st.rerun()
-
-            # Lista de pendientes (solo si ya hay 2+ envíos)
             enviados = set(x[0] for x in c.execute("SELECT DISTINCT autor FROM frases WHERE round_id=?", (round_id,)))
             if len(enviados) >= 2:
                 faltan = [u for u in users if users[u][5] == 1 and users[u][2] == 'jugador' and u not in enviados]
