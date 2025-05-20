@@ -113,6 +113,44 @@ if not open_r:
 round_id = open_r[0]
 
 # ---------- 5. Utilidades ----------------------------------------------------
+# Función para cerrar ronda automáticamente cuando todos los jueces han votado
+
+def auto_close_round():
+    global current_round, round_id
+    frases = c.execute("SELECT id, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
+    if not frases:
+        return  # nada que cerrar
+    N = len(frases)
+    pts = {a: 0 for _, a in frases}
+    for fid, pos in c.execute(
+        "SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
+        (round_id,)):
+        aut = c.execute("SELECT autor FROM frases WHERE id=?", (fid,)).fetchone()[0]
+        pts[aut] += N + 1 - pos
+    orden = sorted(pts, key=pts.get, reverse=True)
+    recomp = [int(get_setting("reward_first")), int(get_setting("reward_second")), int(get_setting("reward_third")), int(get_setting("reward_45")), int(get_setting("reward_45"))]
+    for idx, pl in enumerate(orden):
+        reward = recomp[idx] if idx < len(recomp) else int(get_setting("reward_participate"))
+        mult = c.execute("SELECT multiplier FROM player_round WHERE round_id=? AND username=?", (round_id, pl)).fetchone()[0]
+        c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (reward * mult, pl))
+    eliminado = orden[-1]
+    c.execute("UPDATE users SET active=0 WHERE username=?", (eliminado,))
+    c.execute("UPDATE rounds SET status='closed' WHERE id=?", (round_id,))
+    # abrir siguiente ronda
+    next_num = int(get_setting("current_round")) + 1
+    set_setting("current_round", next_num)
+    c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(?,?,?)", (next_num, 'open', dt.datetime.utcnow().isoformat()))
+    new_rid = c.lastrowid
+    activos = c.execute("SELECT username FROM users WHERE active=1").fetchall()
+    c.executemany("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", [(new_rid, a[0]) for a in activos])
+    conn.commit()
+    # actualizar variables globales y recargar
+    round_id = new_rid
+    current_round = next_num
+    st.success(f"Ronda {next_num -1} cerrada automáticamente. Eliminado: {eliminado}. Nueva ronda abierta.")
+    st.rerun()
+
+
 def load_users(active_only=False):
     q = "SELECT username,password,role,is_admin,coins,active FROM users" + (" WHERE active=1" if active_only else "")
     return {u[0]: u for u in c.execute(q).fetchall()}
