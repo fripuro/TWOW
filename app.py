@@ -232,6 +232,11 @@ with tabs[2]:
         if got < need:
             st.info(f"Faltan votos de {need - got} juez(es).")
         else:
+            # cierre automático si ronda sigue abierta
+            if c.execute("SELECT status FROM rounds WHERE id=?", (round_id,)).fetchone()[0] == 'open':
+                auto_close_round()
+            st.info(f"Faltan votos de {need - got} juez(es).")
+        else:
             frases = c.execute("SELECT id, texto, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
             N = len(frases)
             pts = {fid: 0 for fid, _, _ in frases}
@@ -267,7 +272,8 @@ with tabs[3]:
             wins[ranking[0]] += 1
             for rk, p in enumerate(ranking, 1):
                 avgs[p].append(rk)
-    stats = [{"Jugador": u, "Victorias": wins[u], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"} for u in users]
+    stats = [{"Jugador": u, "Victorias": wins[u], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"}
+             for u in users if users[u][2] == 'jugador'], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"} for u in users]
     st.table(stats)
 
 ###############################################################################
@@ -276,6 +282,12 @@ with tabs[3]:
 if is_admin:
     with tabs[-1]:
         st.header("Panel Admin")
+        # Cambiar título principal
+        st.subheader("Editar título de la temporada")
+        new_title = st.text_input("Nuevo título", get_setting("titulo"))
+        if st.button("Actualizar título"):
+            set_setting("titulo", new_title.strip() or get_setting("titulo"))
+            st.success("Título actualizado – recarga para ver el cambio")
         # Añadir jugador
         st.subheader("Añadir nuevo jugador")
         new_user = st.text_input("Usuario nuevo")
