@@ -162,20 +162,24 @@ with tabs[0]:
     role = users[username][2]
     if role == 'juez':
         st.info("Eres juez: no envías frases, solo votas.")
-    else:
-        state = c.execute("SELECT responses_left FROM player_round WHERE round_id=? AND username=?", (round_id, username)).fetchone()
-        if not state:
-            st.error("No participas en esta ronda.")
+        # Interfaz de votación
+        frases_j = c.execute("SELECT id, texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
+        if not frases_j:
+            st.warning("Aún no hay frases para votar.")
         else:
-            left = state[0]
-            st.info(f"Respuestas restantes: {left}")
-            if left > 0:
-                frase = st.text_input("Tu frase:")
-                if st.button("Enviar") and frase.strip():
-                    c.execute("INSERT INTO frases(texto,autor,round_id) VALUES(?,?,?)", (frase.strip(), username, round_id))
-                    c.execute("UPDATE player_round SET responses_left = responses_left - 1 WHERE round_id=? AND username=?", (round_id, username))
-                    conn.commit(); st.success("Enviada"); st.rerun()
-        # Pendientes (solo si ya hay 2+ envíos)
+            opciones = [f"{fid}:{txt}" for fid, txt in frases_j]
+            ranking = st.multiselect("Ordena de mejor a peor", opciones, default=[], key="rank")
+            if len(ranking) == len(opciones):
+                if st.button("Enviar voto"):
+                    # borrar votos previos del juez
+                    c.execute("DELETE FROM votos WHERE juez=? AND frase_id IN (SELECT id FROM frases WHERE round_id=? )", (username, round_id))
+                    for pos, item in enumerate(ranking, 1):
+                        fid = int(item.split(":")[0])
+                        c.execute("INSERT INTO votos(juez, frase_id, posicion) VALUES(?,?,?)", (username, fid, pos))
+                    conn.commit(); st.success("Voto registrado")
+            else:
+                st.info("Selecciona todas las frases para completar el ranking.")
+    else: (solo si ya hay 2+ envíos)
         enviados = set(x[0] for x in c.execute("SELECT DISTINCT autor FROM frases WHERE round_id=?", (round_id,)))
         if len(enviados) >= 2:
             faltan = [u for u in users if users[u][5] == 1 and users[u][2] == 'jugador' and u not in enviados]
