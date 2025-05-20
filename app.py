@@ -179,7 +179,8 @@ with tabs[0]:
                     conn.commit(); st.success("Voto registrado")
             else:
                 st.info("Selecciona todas las frases para completar el ranking.")
-    else: (solo si ya hay 2+ envíos)
+    else:
+        # solo si ya hay 2+ envíos
         enviados = set(x[0] for x in c.execute("SELECT DISTINCT autor FROM frases WHERE round_id=?", (round_id,)))
         if len(enviados) >= 2:
             faltan = [u for u in users if users[u][5] == 1 and users[u][2] == 'jugador' and u not in enviados]
