@@ -215,8 +215,10 @@ is_admin = st.session_state['is_admin']
 # ACCIÓN                                                                      #
 ###############################################################################
 with tabs[0]:
+    # Botón para refrescar sin cerrar sesión
     if st.button("🔄 Recargar valores"):
         st.rerun()
+
     role = users[username][2]
     if role == 'juez':
         st.info("Eres juez: no envías frases, solo votas.")
