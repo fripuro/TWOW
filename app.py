@@ -163,18 +163,19 @@ with tabs[0]:
     if role == 'juez':
         st.info("Eres juez: no envías frases, solo votas.")
         # Interfaz de votación
-        frases_j = c.execute("SELECT texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
+        frases_j = c.execute("SELECT id, texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
         if not frases_j:
             st.warning("Aún no hay frases para votar.")
         else:
-            opciones = [f"{fid}:{txt}" for fid, txt in frases_j]
-            ranking = st.multiselect("Ordena de mejor a peor", opciones, default=[], key="rank")
-            if len(ranking) == len(opciones):
+            # Mostrar SOLO el texto, mantener mapa id -> texto
+            labels = [txt for _, txt in frases_j]
+            id_map = {txt: fid for fid, txt in frases_j}
+            ranking = st.multiselect("Ordena de mejor a peor", labels, default=[], key="rank")
+            if len(ranking) == len(labels):
                 if st.button("Enviar voto"):
-                    # borrar votos previos del juez
                     c.execute("DELETE FROM votos WHERE juez=? AND frase_id IN (SELECT id FROM frases WHERE round_id=? )", (username, round_id))
-                    for pos, item in enumerate(ranking, 1):
-                        fid = int(item.split(":")[0])
+                    for pos, label in enumerate(ranking, 1):
+                        fid = id_map[label]
                         c.execute("INSERT INTO votos(juez, frase_id, posicion) VALUES(?,?,?)", (username, fid, pos))
                     conn.commit(); st.success("Voto registrado")
             else:
