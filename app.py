@@ -228,35 +228,38 @@ with tabs[2]:
         st.info("Aún no hay frases enviadas.")
     else:
         need = total_judges()
-        got = c.execute("SELECT COUNT(DISTINCT juez) FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )", (round_id,)).fetchone()[0]
+        got = c.execute(
+            "SELECT COUNT(DISTINCT juez) FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
+            (round_id,)).fetchone()[0]
         if got < need:
             st.info(f"Faltan votos de {need - got} juez(es).")
         else:
-            # cierre automático si ronda sigue abierta
+            # Cierre automático si la ronda sigue abierta
             if c.execute("SELECT status FROM rounds WHERE id=?", (round_id,)).fetchone()[0] == 'open':
                 auto_close_round()
-            st.info(f"Faltan votos de {need - got} juez(es).")
-        else:
+
+            # ---- Mostrar resultados finales ----
             frases = c.execute("SELECT id, texto, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
             N = len(frases)
             pts = {fid: 0 for fid, _, _ in frases}
             pos_list = {fid: [] for fid, _, _ in frases}
-            for fid, pos in c.execute("SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )", (round_id,)):
+            for fid, pos in c.execute(
+                "SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
+                (round_id,)):
                 pts[fid] += N + 1 - pos
                 pos_list[fid].append(pos)
             results = []
             for fid, txt, aut in frases:
                 std = float(np.std(pos_list[fid])) if pos_list[fid] else 0.0
                 df = c.execute("SELECT df_flag FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
-                results.append({"Autor": aut, "Puntos": pts[fid], "DF": bool(df), "STD": std, "Frase": txt})
-            # ordenar
+                pen = c.execute("SELECT penalty FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
+                total_pts = pts[fid] + pen  # sumar penalizaciones negativas o positivas
+                results.append({"Autor": aut, "Puntos": total_pts, "DF": bool(df), "STD": std, "Frase": txt})
             results.sort(key=lambda r: (r["Puntos"], r["DF"], r["STD"]), reverse=True)
             st.table(results)
 
-###############################################################################
-# HISTORIAL                                                                   #
-###############################################################################
 with tabs[3]:
+    # --- Historial de rondas ---
     closed = c.execute("SELECT id, numero FROM rounds WHERE status='closed' ORDER BY numero").fetchall()
     wins = {u: 0 for u in users}
     avgs = {u: [] for u in users}
