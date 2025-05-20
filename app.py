@@ -117,38 +117,54 @@ round_id = open_r[0]
 
 def auto_close_round():
     global current_round, round_id
-    frases = c.execute("SELECT id, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
+    frases = c.execute("SELECT id, texto, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
     if not frases:
-        return  # nada que cerrar
+        return
     N = len(frases)
-    pts = {a: 0 for _, a in frases}
+    pts = {fid: 0 for fid, _, _ in frases}
+    pos_map = {fid: [] for fid, _, _ in frases}
     for fid, pos in c.execute(
         "SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
         (round_id,)):
-        aut = c.execute("SELECT autor FROM frases WHERE id=?", (fid,)).fetchone()[0]
-        pts[aut] += N + 1 - pos
-    orden = sorted(pts, key=pts.get, reverse=True)
+        pts[fid] += N + 1 - pos
+        pos_map[fid].append(pos)
+
+    results = []
+    for fid, txt, aut in frases:
+        std = float(np.std(pos_map[fid])) if pos_map[fid] else 0.0
+        pen = c.execute("SELECT penalty FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
+        total = pts[fid] + pen
+        df  = c.execute("SELECT df_flag FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
+        results.append({"Autor": aut, "Puntos": total, "DF": bool(df), "STD": std, "Frase": txt})
+    results.sort(key=lambda r: (r["Puntos"], r["DF"], r["STD"]), reverse=True)
+
+    st.subheader(f"Resultados ronda {current_round}")
+    st.table(results)
+
+    # premios
     recomp = [int(get_setting("reward_first")), int(get_setting("reward_second")), int(get_setting("reward_third")), int(get_setting("reward_45")), int(get_setting("reward_45"))]
+    orden = [r["Autor"] for r in results]
     for idx, pl in enumerate(orden):
         reward = recomp[idx] if idx < len(recomp) else int(get_setting("reward_participate"))
         mult = c.execute("SELECT multiplier FROM player_round WHERE round_id=? AND username=?", (round_id, pl)).fetchone()[0]
         c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (reward * mult, pl))
+
     eliminado = orden[-1]
     c.execute("UPDATE users SET active=0 WHERE username=?", (eliminado,))
     c.execute("UPDATE rounds SET status='closed' WHERE id=?", (round_id,))
-    # abrir siguiente ronda
-    next_num = int(get_setting("current_round")) + 1
+
+    # preparar nueva ronda
+    next_num = current_round + 1
     set_setting("current_round", next_num)
     c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(?,?,?)", (next_num, 'open', dt.datetime.utcnow().isoformat()))
     new_rid = c.lastrowid
     activos = c.execute("SELECT username FROM users WHERE active=1").fetchall()
     c.executemany("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", [(new_rid, a[0]) for a in activos])
     conn.commit()
-    # actualizar variables globales y recargar
+
     round_id = new_rid
     current_round = next_num
-    st.success(f"Ronda {next_num -1} cerrada automáticamente. Eliminado: {eliminado}. Nueva ronda abierta.")
-    st.rerun()
+    st.success(f"Ronda {next_num -1} cerrada automáticamente. Eliminado: {eliminado}. ¡Nueva ronda disponible!")
 
 
 def load_users(active_only=False):
