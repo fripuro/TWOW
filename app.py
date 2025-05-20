@@ -259,7 +259,35 @@ with tabs[0]:
 ###############################################################################
 SHOP = {"Doble Respuesta": 10, "Triple Respuesta": 25, "Desempate Favorable": 8, "Ruleta del Tigre": 9, "Duplicador de Monedas": 12}
 with tabs[1]:
-    coins = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]
+    # Manejo de Ruleta pendiente
+    if st.session_state.get("pending_ruleta", False) and st.session_state.get("ruleta_buyer") == username:
+        st.subheader("Configurar Ruleta del Tigre")
+        r1 = st.text_input("Jugador 1")
+        r2 = st.text_input("Jugador 2")
+        if st.button("Ejecutar Ruleta"):
+            users = load_users()
+            valid = all(r in users and users[r][5] == 1 for r in [r1, r2]) and r1 != r2 and r1 not in ["", username] and r2 not in ["", username]
+            if valid:
+                price = SHOP["Ruleta del Tigre"]
+                coins_user = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]
+                if coins_user < price:
+                    st.error("Monedas insuficientes")
+                else:
+                    loser = random.choice([username, r1, r2])
+                    c.execute("UPDATE users SET coins = coins - 3 WHERE username=?", (loser,))
+                    c.execute("UPDATE users SET coins = coins - ? WHERE username=?", (price, username))
+                    c.execute("INSERT INTO purchases(round_id, username, item, meta) VALUES(?,?,?,?)", (round_id, username, "Ruleta del Tigre", f"{r1}|{r2}"))
+                    conn.commit()
+                    st.success(f"Perdedor: {loser}")
+                    # reset flags
+                    st.session_state["pending_ruleta"] = False
+                    st.session_state["ruleta_buyer"] = None
+                    st.rerun()
+            else:
+                st.error("Jugadores inválidos o repetidos")
+        st.stop()
+
+    coins = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]
     st.write(f"Monedas: **{coins}**")
     bought = c.execute("SELECT item FROM purchases WHERE round_id=? AND username=?", (round_id, username)).fetchone()
     if bought:
@@ -282,18 +310,11 @@ with tabs[1]:
                     elif itm == "Duplicador de Monedas":
                         c.execute("UPDATE player_round SET multiplier = 2 WHERE round_id=? AND username=?", (round_id, username))
                     elif itm == "Ruleta del Tigre":
-                        with st.expander("Selecciona dos rivales"):
-                            r1 = st.text_input("Jugador 1")
-                            r2 = st.text_input("Jugador 2")
-                            if st.button("Ejecutar Ruleta"):
-                                valid = all(r in users and users[r][5] == 1 for r in [r1, r2]) and r1 != r2 and r1 not in ["", username] and r2 not in ["", username]
-                                if valid:
-                                    loser = random.choice([username, r1, r2])
-                                    c.execute("UPDATE users SET coins = coins - 3 WHERE username=?", (loser,))
-                                    st.success(f"Perdedor: {loser}")
-                                else:
-                                    st.error("Jugadores inválidos o repetidos")
-                    # Cobrar y registrar compra
+                        # guardar estado en sesión y pedir nombres en nuevo render
+                        st.session_state["pending_ruleta"] = True
+                        st.session_state["ruleta_buyer"] = username
+                        st.rerun()
+                    # Cobrar y registrar compra (genérico para otros ítems)
                     c.execute("UPDATE users SET coins = coins - ? WHERE username=?", (price, username))
                     c.execute("INSERT INTO purchases(round_id, username, item) VALUES(?,?,?)", (round_id, username, itm))
                     conn.commit(); st.success("Compra aplicada"); st.rerun()
@@ -368,6 +389,14 @@ with tabs[3]:
 if is_admin:
     with tabs[-1]:
         st.header("Panel Admin")
+        # --- Notificación de Ruleta del Tigre comprada esta ronda ---
+        ruletas = c.execute("SELECT username, meta FROM purchases WHERE round_id=? AND item='Ruleta del Tigre'", (round_id,)).fetchall()
+        if ruletas:
+            st.subheader("Ruletas del Tigre compradas")
+            for u, meta in ruletas:
+                rival1, rival2 = (meta or "|").split("|")
+                st.write(f"**{u}** retó a **{rival1}** y **{rival2}**")
+        st.markdown("---")
         # Cambiar título principal
         st.subheader("Editar título de la temporada")
         new_title = st.text_input("Nuevo título", get_setting("titulo"))
@@ -434,6 +463,26 @@ if is_admin:
                 c.execute("UPDATE player_round SET responses_left = responses_left + ? WHERE round_id=? AND username=?", (delta_resp, round_id, sel_user))
             conn.commit(); st.success("Ajustes aplicados"); st.rerun()
 
+        st.markdown("---")
+        # --- Reinicio TOTAL de la base de datos ---
+        if st.button("⚠️ Reiniciar base de datos (borrar todo)"):
+            confirm = st.checkbox("Confirmo reinicio completo")
+            if confirm:
+                tables = ["frases", "votos", "rounds", "purchases", "player_round", "users"]
+                for tbl in tables:
+                    if tbl == "users":
+                        c.execute("DELETE FROM users WHERE username <> 'Jlarriva'")
+                    else:
+                        c.execute(f"DELETE FROM {tbl}")
+                # reset ajustes
+                set_setting("current_round", 1)
+                # volver a crear ronda 1 con admin
+                c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(1,'open',?)", (dt.datetime.utcnow().isoformat(),))
+                new_rid = c.lastrowid
+                c.execute("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", (new_rid, 'Jlarriva'))
+                conn.commit()
+                st.success("Base reiniciada. Solo la cuenta admin permanece. Recarga la página.")
+                st.rerun()
         st.markdown("---")
         # Cerrar ronda
         if st.button("Cerrar ronda y otorgar premios"):
