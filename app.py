@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS player_round(
   responses_left INTEGER NOT NULL,
   df_flag INTEGER NOT NULL DEFAULT 0,
   multiplier INTEGER NOT NULL DEFAULT 1,
+  penalty INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(round_id,username))
 """)
 
@@ -71,6 +72,12 @@ CREATE TABLE IF NOT EXISTS purchases(
   meta TEXT)
 """)
 conn.commit()
+# aseguramos que la columna penalty exista si la tabla venía de versiones previas
+try:
+    c.execute("ALTER TABLE player_round ADD COLUMN penalty INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
 
 # ---------- 2. Seed: solo admin con 0 monedas -------------------------------
 if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -329,7 +336,7 @@ if is_admin:
                 conn.commit(); st.success("Rehabilitado"); st.rerun()
 
         st.markdown("---")
-        # Recompensas configurables (como antes)  
+        # Recompensas configurables
         col1, col2, col3, col4 = st.columns(4)
         r1 = col1.number_input("1º", value=int(get_setting("reward_first")))
         r2 = col2.number_input("2º", value=int(get_setting("reward_second")))
@@ -338,6 +345,22 @@ if is_admin:
         if st.button("Guardar recompensas"):
             set_setting("reward_first", r1); set_setting("reward_second", r2); set_setting("reward_third", r3); set_setting("reward_45", r45)
             st.success("Recompensas guardadas")
+
+        st.markdown("---")
+        # Ajustar monedas, penalización y respuestas
+        st.subheader("Ajustar parámetros de jugador")
+        sel_user = st.selectbox("Jugador", list(users.keys()))
+        delta_coins = st.number_input("± Monedas", value=0, step=1, format="%d")
+        delta_pen  = st.number_input("± Penalización de puntos", value=0, step=1, format="%d")
+        delta_resp = st.number_input("± Respuestas restantes", value=0, step=1, format="%d")
+        if st.button("Aplicar ajustes"):
+            if delta_coins:
+                c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (delta_coins, sel_user))
+            if delta_pen:
+                c.execute("UPDATE player_round SET penalty = penalty + ? WHERE round_id=? AND username=?", (delta_pen, round_id, sel_user))
+            if delta_resp:
+                c.execute("UPDATE player_round SET responses_left = responses_left + ? WHERE round_id=? AND username=?", (delta_resp, round_id, sel_user))
+            conn.commit(); st.success("Ajustes aplicados"); st.rerun()
 
         st.markdown("---")
         # Cerrar ronda
