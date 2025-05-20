@@ -287,7 +287,7 @@ with tabs[1]:
                 st.error("Jugadores inválidos o repetidos")
         st.stop()
 
-    coins = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]
+    coins = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()[0]
     st.write(f"Monedas: **{coins}**")
     bought = c.execute("SELECT item FROM purchases WHERE round_id=? AND username=?", (round_id, username)).fetchone()
     if bought:
