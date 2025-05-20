@@ -194,55 +194,30 @@ if not st.session_state['user']:
             st.session_state['is_admin'] = bool(users[u][3])
             st.rerun()
         else:
-            st.sidebar.error("Credenciales incorrectas o cuenta inactiva")
-    st.stop()
-
-username = st.session_state['user']
-is_admin = st.session_state['is_admin']
-st.sidebar.success(f"Conectado como {username}")
-if st.sidebar.button("Cerrar sesión"):
-    st.session_state.clear(); st.rerun()
-
-# ---------- 7. Tabs ----------------------------------------------------------
-base_tabs = ["Acción", "Tienda", "Resultados", "Historial"]
-if is_admin:
-    base_tabs.append("Admin")
-tabs = st.tabs(base_tabs)
-
-###############################################################################
-# ACCIÓN (jugador)                                                            #
-###############################################################################
-with tabs[0]:
-    role = users[username][2]
-    if role == 'juez':
-        st.info("Eres juez: no envías frases, solo votas.")
-        # Interfaz de votación
-        frases_j = c.execute("SELECT id, texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
-        if not frases_j:
-            st.warning("Aún no hay frases para votar.")
+        # --- Formulario de envío para jugadores ---
+        pr_state = c.execute("SELECT responses_left FROM player_round WHERE round_id=? AND username=?",
+                             (round_id, username)).fetchone()
+        if not pr_state:
+            st.error("No participas en esta ronda.")
         else:
-            # Mostrar SOLO el texto, mantener mapa id -> texto
-            labels = [txt for _, txt in frases_j]
-            id_map = {txt: fid for fid, txt in frases_j}
-            ranking = st.multiselect("Ordena de mejor a peor", labels, default=[], key="rank")
-            if len(ranking) == len(labels):
-                if st.button("Enviar voto"):
-                    c.execute("DELETE FROM votos WHERE juez=? AND frase_id IN (SELECT id FROM frases WHERE round_id=? )", (username, round_id))
-                    for pos, label in enumerate(ranking, 1):
-                        fid = id_map[label]
-                        c.execute("INSERT INTO votos(juez, frase_id, posicion) VALUES(?,?,?)", (username, fid, pos))
-                    conn.commit(); st.success("Voto registrado")
-            else:
-                st.info("Selecciona todas las frases para completar el ranking.")
-    else:
-        # solo si ya hay 2+ envíos
-        enviados = set(x[0] for x in c.execute("SELECT DISTINCT autor FROM frases WHERE round_id=?", (round_id,)))
-        if len(enviados) >= 2:
-            faltan = [u for u in users if users[u][5] == 1 and users[u][2] == 'jugador' and u not in enviados]
-            random.shuffle(faltan)
-            st.write("Pendientes:", ", ".join(faltan) if faltan else "Todos han enviado")
+            left = pr_state[0]
+            st.info(f"Respuestas restantes: {left}")
+            if left > 0:
+                frase_txt = st.text_input("Tu frase:")
+                if st.button("Enviar frase") and frase_txt.strip():
+                    c.execute("INSERT INTO frases(texto, autor, round_id) VALUES(?,?,?)",
+                              (frase_txt.strip(), username, round_id))
+                    c.execute("UPDATE player_round SET responses_left = responses_left - 1 WHERE round_id=? AND username=?",
+                              (round_id, username))
+                    conn.commit(); st.success("Frase enviada"); st.rerun()
 
-###############################################################################
+            # Lista de pendientes (solo si ya hay 2+ envíos)
+            enviados = set(x[0] for x in c.execute("SELECT DISTINCT autor FROM frases WHERE round_id=?", (round_id,)))
+            if len(enviados) >= 2:
+                faltan = [u for u in users if users[u][5] == 1 and users[u][2] == 'jugador' and u not in enviados]
+                random.shuffle(faltan)
+                st.write("Pendientes:", ", ".join(faltan) if faltan else "Todos han enviado")
+
 # TIENDA                                                                      #
 ###############################################################################
 SHOP = {"Doble Respuesta": 10, "Triple Respuesta": 25, "Desempate Favorable": 8, "Ruleta del Tigre": 9, "Duplicador de Monedas": 12}
