@@ -287,5 +287,240 @@ with tabs[1]:
                 st.error("Jugadores inválidos o repetidos")
         st.stop()
 
-    row = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()
-    coins = row[0] if row else 0
+    row_coins = c.execute("SELECT coins FROM users WHERE username=?", (username,)).fetchone()
+    coins = row_coins[0] if row_coins else 0
+    st.write(f"Monedas: **{coins}**")
+    bought = c.execute("SELECT item FROM purchases WHERE round_id=? AND username=?", (round_id, username)).fetchone()
+    if bought:
+        st.info(f"Ya compraste {bought[0]} esta ronda.")
+    else:
+        for itm, price in SHOP.items():
+            colA, colB = st.columns([3, 1])
+            colA.write(f"**{itm}** – {price} monedas")
+            if colB.button(f"Comprar {itm}"):
+                if coins < price:
+                    st.error("Monedas insuficientes")
+                else:
+                    # efectos inmediatos
+                    if itm == "Doble Respuesta":
+                        c.execute("UPDATE player_round SET responses_left = responses_left + 1 WHERE round_id=? AND username=?", (round_id, username))
+                    elif itm == "Triple Respuesta":
+                        c.execute("UPDATE player_round SET responses_left = responses_left + 2 WHERE round_id=? AND username=?", (round_id, username))
+                    elif itm == "Desempate Favorable":
+                        c.execute("UPDATE player_round SET df_flag = 1 WHERE round_id=? AND username=?", (round_id, username))
+                    elif itm == "Duplicador de Monedas":
+                        c.execute("UPDATE player_round SET multiplier = 2 WHERE round_id=? AND username=?", (round_id, username))
+                    elif itm == "Ruleta del Tigre":
+                        # guardar estado en sesión y pedir nombres en nuevo render
+                        st.session_state["pending_ruleta"] = True
+                        st.session_state["ruleta_buyer"] = username
+                        st.rerun()
+                    # Cobrar y registrar compra (genérico para otros ítems)
+                    c.execute("UPDATE users SET coins = coins - ? WHERE username=?", (price, username))
+                    c.execute("INSERT INTO purchases(round_id, username, item) VALUES(?,?,?)", (round_id, username, itm))
+                    conn.commit(); st.success("Compra aplicada"); st.rerun()
+
+###############################################################################
+# RESULTADOS                                                                  #
+###############################################################################
+with tabs[2]:
+    enviados = c.execute("SELECT COUNT(DISTINCT autor) FROM frases WHERE round_id=?", (round_id,)).fetchone()[0]
+    if enviados == 0:
+        st.info("Aún no hay frases enviadas.")
+    else:
+        need = total_judges()
+        got = c.execute(
+            "SELECT COUNT(DISTINCT juez) FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
+            (round_id,)).fetchone()[0]
+        if got < need:
+            st.info(f"Faltan votos de {need - got} juez(es).")
+        else:
+            # Cierre automático si la ronda sigue abierta
+            if c.execute("SELECT status FROM rounds WHERE id=?", (round_id,)).fetchone()[0] == 'open':
+                auto_close_round()
+
+            # ---- Mostrar resultados finales ----
+            frases = c.execute("SELECT id, texto, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
+            N = len(frases)
+            pts = {fid: 0 for fid, _, _ in frases}
+            pos_list = {fid: [] for fid, _, _ in frases}
+            for fid, pos in c.execute(
+                "SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )",
+                (round_id,)):
+                pts[fid] += N + 1 - pos
+                pos_list[fid].append(pos)
+            results = []
+            for fid, txt, aut in frases:
+                std = float(np.std(pos_list[fid])) if pos_list[fid] else 0.0
+                df = c.execute("SELECT df_flag FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
+                pen = c.execute("SELECT penalty FROM player_round WHERE round_id=? AND username=?", (round_id, aut)).fetchone()[0]
+                total_pts = pts[fid] + pen  # sumar penalizaciones negativas o positivas
+                results.append({"Autor": aut, "Puntos": total_pts, "DF": bool(df), "STD": std, "Frase": txt})
+            results.sort(key=lambda r: (r["Puntos"], r["DF"], r["STD"]), reverse=True)
+            st.table(results)
+
+with tabs[3]:
+    # --- Historial de rondas ---
+    closed = c.execute("SELECT id, numero FROM rounds WHERE status='closed' ORDER BY numero").fetchall()
+    wins = {u: 0 for u in users}
+    avgs = {u: [] for u in users}
+    for rid, num in closed:
+        fr = c.execute("SELECT id, autor FROM frases WHERE round_id=?", (rid,)).fetchall()
+        N = len(fr)
+        pts = {a: 0 for _, a in fr}
+        for fid, pos in c.execute("SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )", (rid,)):
+            aut = c.execute("SELECT autor FROM frases WHERE id=?", (fid,)).fetchone()[0]
+            pts[aut] += N + 1 - pos
+        if pts:
+            ranking = sorted(pts, key=pts.get, reverse=True)
+            wins[ranking[0]] += 1
+            for rk, p in enumerate(ranking, 1):
+                avgs[p].append(rk)
+    # Estadísticas de jugadores (sin jueces)
+    stats = [{
+        "Jugador": u,
+        "Victorias": wins[u],
+        "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"
+    } for u in users if users[u][2] == 'jugador']
+    st.table(stats)
+
+###############################################################################
+# ADMIN                                                                       #
+###############################################################################
+if is_admin:
+    with tabs[-1]:
+        st.header("Panel Admin")
+        # --- Notificación de Ruleta del Tigre comprada esta ronda ---
+        ruletas = c.execute("SELECT username, meta FROM purchases WHERE round_id=? AND item='Ruleta del Tigre'", (round_id,)).fetchall()
+        if ruletas:
+            st.subheader("Ruletas del Tigre compradas")
+            for u, meta in ruletas:
+                rival1, rival2 = (meta or "|").split("|")
+                st.write(f"**{u}** retó a **{rival1}** y **{rival2}**")
+        st.markdown("---")
+        # Cambiar título principal
+        st.subheader("Editar título de la temporada")
+        new_title = st.text_input("Nuevo título", get_setting("titulo"))
+        if st.button("Actualizar título"):
+            set_setting("titulo", new_title.strip() or get_setting("titulo"))
+            st.success("Título actualizado – recarga para ver el cambio")
+        # Añadir jugador
+        st.subheader("Añadir nuevo jugador")
+        new_user = st.text_input("Usuario nuevo")
+        new_pass = st.text_input("Contraseña nueva")
+        new_role = st.selectbox("Rol", ["jugador", "juez"])
+        if st.button("Crear jugador"):
+            if new_user in users:
+                st.error("El usuario ya existe")
+            elif not new_user or not new_pass:
+                st.error("Usuario y contraseña obligatorios")
+            else:
+                c.execute("INSERT INTO users VALUES(?,?,?,?,?,?)", (new_user, new_pass, new_role, 0, 0, 1))
+                # también agregar a ronda actual
+                c.execute("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", (round_id, new_user))
+                conn.commit(); st.success("Jugador añadido"); st.rerun()
+
+        st.markdown("---")
+        # Desactivar / habilitar
+        colA, colB = st.columns(2)
+        with colA:
+            des = st.selectbox("Desactivar", [u for u in users if users[u][5] == 1])
+            if st.button("Desactivar"):
+                c.execute("UPDATE users SET active=0 WHERE username=?", (des,))
+                conn.commit(); st.success("Desactivado"); st.rerun()
+        with colB:
+            reh = st.selectbox("Rehabilitar", [u for u in users if users[u][5] == 0])
+            if st.button("Rehabilitar"):
+                c.execute("UPDATE users SET active=1 WHERE username=?", (reh,))
+                # añadir al player_round si no existe para ronda actual
+                if not c.execute("SELECT 1 FROM player_round WHERE round_id=? AND username=?", (round_id, reh)).fetchone():
+                    c.execute("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", (round_id, reh))
+                conn.commit(); st.success("Rehabilitado"); st.rerun()
+
+        st.markdown("---")
+        # Recompensas configurables
+        col1, col2, col3, col4 = st.columns(4)
+        r1 = col1.number_input("1º", value=int(get_setting("reward_first")))
+        r2 = col2.number_input("2º", value=int(get_setting("reward_second")))
+        r3 = col3.number_input("3º", value=int(get_setting("reward_third")))
+        r45 = col4.number_input("4º-5º", value=int(get_setting("reward_45")))
+        if st.button("Guardar recompensas"):
+            set_setting("reward_first", r1); set_setting("reward_second", r2); set_setting("reward_third", r3); set_setting("reward_45", r45)
+            st.success("Recompensas guardadas")
+
+        st.markdown("---")
+        # Ajustar monedas, penalización y respuestas
+        st.subheader("Ajustar parámetros de jugador")
+        sel_user = st.selectbox("Jugador", list(users.keys()))
+        delta_coins = st.number_input("± Monedas", value=0, step=1, format="%d")
+        delta_pen  = st.number_input("± Penalización de puntos", value=0, step=1, format="%d")
+        delta_resp = st.number_input("± Respuestas restantes", value=0, step=1, format="%d")
+        if st.button("Aplicar ajustes"):
+            if delta_coins:
+                c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (delta_coins, sel_user))
+            if delta_pen:
+                c.execute("UPDATE player_round SET penalty = penalty + ? WHERE round_id=? AND username=?", (delta_pen, round_id, sel_user))
+            if delta_resp:
+                c.execute("UPDATE player_round SET responses_left = responses_left + ? WHERE round_id=? AND username=?", (delta_resp, round_id, sel_user))
+            conn.commit(); st.success("Ajustes aplicados"); st.rerun()
+
+        st.markdown("---")
+        # --- Reinicio TOTAL de la base de datos ---
+        if st.button("⚠️ Reiniciar base de datos (borrar todo)"):
+            confirm = st.checkbox("Confirmo reinicio completo")
+            if confirm:
+                tables = ["frases", "votos", "rounds", "purchases", "player_round", "users"]
+                for tbl in tables:
+                    if tbl == "users":
+                        c.execute("DELETE FROM users WHERE username <> 'Jlarriva'")
+                    else:
+                        c.execute(f"DELETE FROM {tbl}")
+                # reset ajustes
+                set_setting("current_round", 1)
+                # volver a crear ronda 1 con admin
+                c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(1,'open',?)", (dt.datetime.utcnow().isoformat(),))
+                new_rid = c.lastrowid
+                c.execute("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", (new_rid, 'Jlarriva'))
+                conn.commit()
+                st.success("Base reiniciada. Solo la cuenta admin permanece. Recarga la página.")
+                st.rerun()
+        st.markdown("---")
+        # Cerrar ronda
+        if st.button("Cerrar ronda y otorgar premios"):
+            frases = c.execute("SELECT id, autor FROM frases WHERE round_id=?", (round_id,)).fetchall()
+            if not frases:
+                st.error("Sin frases para esta ronda")
+            else:
+                N = len(frases)
+                pts = {a: 0 for _, a in frases}
+                for fid, pos in c.execute("SELECT frase_id, posicion FROM votos WHERE frase_id IN (SELECT id FROM frases WHERE round_id=? )", (round_id,)):
+                    aut = c.execute("SELECT autor FROM frases WHERE id=?", (fid,)).fetchone()[0]
+                    pts[aut] += N + 1 - pos
+                ord_list = sorted(pts, key=pts.get, reverse=True)
+                rewards = [
+                    int(get_setting("reward_first")),
+                    int(get_setting("reward_second")),
+                    int(get_setting("reward_third")),
+                    int(get_setting("reward_45")),
+                    int(get_setting("reward_45"))
+                ]
+                for idx, pl in enumerate(ord_list):
+                    reward = rewards[idx] if idx < len(rewards) else int(get_setting("reward_participate"))
+                    mult = c.execute("SELECT multiplier FROM player_round WHERE round_id=? AND username=?", (round_id, pl)).fetchone()[0]
+                    c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (reward * mult, pl))
+                best_pos = {}
+                for idx, au in enumerate(ord_list):
+                    if au not in best_pos:
+                        best_pos[au] = idx
+                eliminado = sorted(best_pos.items(), key=lambda x: x[1])[-1][0]
+                c.execute("UPDATE users SET active=0 WHERE username=?", (eliminado,))
+                c.execute("UPDATE rounds SET status='closed' WHERE id=?", (round_id,))
+                next_num = current_round + 1
+                set_setting("current_round", next_num)
+                c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(?,?,?)", (next_num, 'open', dt.datetime.utcnow().isoformat()))
+                new_rid = c.lastrowid
+                activos = c.execute("SELECT username FROM users WHERE active=1").fetchall()
+                c.executemany("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", [(new_rid, a[0]) for a in activos])
+                conn.commit()
+                st.success(f"Ronda cerrada. Eliminado: {eliminado}. Ronda {next_num} abierta.")
+                st.rerun()
