@@ -470,8 +470,9 @@ if is_admin:
 
         st.markdown("---")
         # --- Reinicio TOTAL de la base de datos ---
-        if st.button("⚠️ Reiniciar base de datos (borrar todo)"):
-            confirm = st.checkbox("Confirmo reinicio completo")
+        st.subheader("Reiniciar base de datos")
+        confirm = st.checkbox("⚠️ Confirmo reinicio completo (esto borra TODO)")
+        if st.button("Ejecutar reinicio"):
             if confirm:
                 tables = ["frases", "votos", "rounds", "purchases", "player_round", "users"]
                 for tbl in tables:
@@ -479,15 +480,16 @@ if is_admin:
                         c.execute("DELETE FROM users WHERE username <> 'Jlarriva'")
                     else:
                         c.execute(f"DELETE FROM {tbl}")
-                # reset ajustes
                 set_setting("current_round", 1)
-                # volver a crear ronda 1 con admin
+                # crear ronda 1 y reiniciar ajustes temporales
                 c.execute("INSERT INTO rounds(numero,status,created_at) VALUES(1,'open',?)", (dt.datetime.utcnow().isoformat(),))
                 new_rid = c.lastrowid
                 c.execute("INSERT INTO player_round(round_id, username, responses_left) VALUES(?,?,1)", (new_rid, 'Jlarriva'))
                 conn.commit()
                 st.success("Base reiniciada. Solo la cuenta admin permanece. Recarga la página.")
                 st.rerun()
+            else:
+                st.error("Marca la casilla de confirmación primero.")
         st.markdown("---")
         # Cerrar ronda
         if st.button("Cerrar ronda y otorgar premios"):
