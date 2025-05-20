@@ -273,6 +273,7 @@ with tabs[3]:
             for rk, p in enumerate(ranking, 1):
                 avgs[p].append(rk)
     stats = [{"Jugador": u, "Victorias": wins[u], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"}
+             for u in users if users[u][2] == 'jugador']], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"}
              for u in users if users[u][2] == 'jugador'], "Promedio": round(np.mean(avgs[u]), 2) if avgs[u] else "-"} for u in users]
     st.table(stats)
 
