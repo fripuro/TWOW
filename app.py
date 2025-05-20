@@ -163,7 +163,7 @@ with tabs[0]:
     if role == 'juez':
         st.info("Eres juez: no envías frases, solo votas.")
         # Interfaz de votación
-        frases_j = c.execute("SELECT id, texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
+        frases_j = c.execute("SELECT texto FROM frases WHERE round_id=?", (round_id,)).fetchall()
         if not frases_j:
             st.warning("Aún no hay frases para votar.")
         else:
