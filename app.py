@@ -149,7 +149,12 @@ def auto_close_round():
         mult = c.execute("SELECT multiplier FROM player_round WHERE round_id=? AND username=?", (round_id, pl)).fetchone()[0]
         c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (reward * mult, pl))
 
-    eliminado = orden[-1]
+    # Determinar eliminado: peor "mejor" puesto
+    best_pos = {}
+    for idx, auth in enumerate(orden):
+        if auth not in best_pos:
+            best_pos[auth] = idx  # primera aparición (mejor puesto)
+    eliminado = sorted(best_pos.items(), key=lambda x: x[1])[-1][0]
     c.execute("UPDATE users SET active=0 WHERE username=?", (eliminado,))
     c.execute("UPDATE rounds SET status='closed' WHERE id=?", (round_id,))
 
@@ -453,7 +458,11 @@ if is_admin:
                     reward = rewards[idx] if idx < len(rewards) else int(get_setting("reward_participate"))
                     mult = c.execute("SELECT multiplier FROM player_round WHERE round_id=? AND username=?", (round_id, pl)).fetchone()[0]
                     c.execute("UPDATE users SET coins = coins + ? WHERE username=?", (reward * mult, pl))
-                eliminado = ord_list[-1]
+                best_pos = {}
+                for idx, au in enumerate(ord_list):
+                    if au not in best_pos:
+                        best_pos[au] = idx
+                eliminado = sorted(best_pos.items(), key=lambda x: x[1])[-1][0]
                 c.execute("UPDATE users SET active=0 WHERE username=?", (eliminado,))
                 c.execute("UPDATE rounds SET status='closed' WHERE id=?", (round_id,))
                 next_num = current_round + 1
